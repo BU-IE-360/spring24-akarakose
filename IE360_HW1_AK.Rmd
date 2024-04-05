@@ -1,0 +1,795 @@
+---
+title: "HW1 Time Series Regression"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Introduction
+
+In this project, regression models for three different times series data will be built. These data are collected from Central Bank of the Republic of Turkey. the chosen data are:
+
+-   Unemployment percentage
+-   House price index
+-   Real sector confidence index
+
+All of these data are monthly and we have the time series for them from 01-2014 to 01-2024. Therefore they can be plotted against themselves.
+
+The basic approach to the problem is like this: We ask ourselves what could these forecast variables be related to?
+
+After finding the potential answers, these answers are searched in Google trends data and downloaded. Also the time series plot is observed in order to see any trend or seasonality and add them as predictors as well.
+
+After the predictors are decided on several models are built by using all of them and removing some of them. then these models are compared using tests such as AIC or adjusted R squared.
+
+After deciding on which predictors to use, we can proceed with our final decided model. The final decided model is plotted agains the real data in order to see how good the model is.
+
+Finally, the residuals are evaluated. In this part, we try to answer whether our assumptions about the residuals are correct. These are:
+
+-   They have mean zero
+-   Distributed approximately normal
+-   They don't have autocorrelation
+
+If all three of these apply then we can conclude that we have a decent model.
+
+Firstly require the necessary libraries and set the plot window, height and width.
+
+```{r}
+require(data.table)
+require(lubridate)
+require(forecast)
+require(skimr)
+require(repr)
+require(readxl)
+require(ggplot2)
+
+
+options(repr.plot.width=12.7, repr.plot.height=8.5)
+```
+
+Create data tables for our three forecast variables.
+
+```{r}
+data_path_unemployment ='/Users/ahmetkarakose/Desktop/EVDS.xlsx'
+unemployment_data = read_excel(data_path)
+
+data_path_housing = '/Users/ahmetkarakose/Desktop/konut_fiyat.xlsx'
+house_index_data = read_excel(data_path_housing)
+
+data_path_confidence = '/Users/ahmetkarakose/Desktop/confidence.xlsx'
+confidence = read_excel(data_path_confidence)
+
+```
+
+Manipulate and clean the data, so it's at a desired format. Make the forecast values as type numeric. Rename the forecast variable column to a more readable title and make the date column as date type.
+
+Also, create a combined version of these three data.
+
+```{r}
+unemployment_data <- unemployment_data[-(122:133),]
+unemployment_data <- unemployment_data[,-3]
+unemployment_data$"TP YISGUCU2 G8"  <- as.numeric(unemployment_data$"TP YISGUCU2 G8")
+names(unemployment_data)[names(unemployment_data) == "TP YISGUCU2 G8"] <- "Unemployment"
+unemployment_data$Date <- paste(unemployment_data$Date, "-01", sep = "")
+unemployment_data$Date <- as.Date(unemployment_data$Date)
+
+house_index_data <- house_index_data[-(122:133),]
+house_index_data <- house_index_data[,-3]
+house_index_data$"TP HKFE01"  <- as.numeric(house_index_data$"TP HKFE01")
+names(house_index_data)[names(house_index_data) == "TP HKFE01"] <- "House Price Index"
+house_index_data$Tarih <- paste(house_index_data$Tarih, "-01", sep = "")
+house_index_data$Tarih <- as.Date(house_index_data$Tarih)
+
+confidence <- confidence[-(122:133),]
+confidence <- confidence[,-3]
+confidence$"TP GY1 N2"  <- as.numeric(confidence$"TP GY1 N2")
+names(confidence)[names(confidence) == "TP GY1 N2"] <- "Real Sector Confidence Index"
+confidence$Date <- paste(confidence$Date, "-01", sep = "")
+confidence$Date <- as.Date(confidence$Date)
+
+combined <- cbind(unemployment_data[,2], house_index_data[,2], confidence[,2])
+combined
+```
+
+In order to see the correlation between data, plot each forecast variable agains the other one and see their correlation values. They need to be less than 0.5 in order to proceed with these forecast varaibles.
+
+As it can be seen below the correlations are:
+
+-   -0.398 for House Price Index vs. Unemployment
+-   -0.310 for Real Sector Confidence vs. Unemployment
+-   -0.010 for Real Sector Confidence vs. House Price Index
+
+```{r}
+require(GGally)
+ggpairs(combined)
+```
+
+## Unemployment
+
+Firstly, the regression model for the Unemployment data will be built.
+
+Below is the Unemployment vs. Time graph. We can make some deductions out of it:
+
+-   There is an obvious seasonality between 2014 - 2018 and 2021-2024. So seasonality can be added to our model.
+-   Also there is increasing trend between 2014-2018 and decreasing trend between 2021-2024. A piecewise trend could be added to our model.
+-   There is a sharp increase in 2019.
+
+```{r}
+time_data <- c(year(min(unemployment_data$Date)), month(min(unemployment_data$Date)))
+unemployment_ts <- ts(unemployment_data$Unemployment, start = time_data, frequency = 12)
+
+autoplot(unemployment_ts) + ggtitle("Unemployment (%) vs Time") + xlab("Year") + ylab("Unemployment (%)")
+```
+
+When we observe the ACF function for the time series we can observe an increase in lag-12 and lag-24. This proves there is seasonality in data.
+
+```{r}
+ggAcf(unemployment_ts, lag.max = 48) + ggtitle("Unemployment ACF")
+```
+
+Now, we want to find predictors from Google Trends that can be somehow related with the Unemployment in Turkey. When keywords for this relation is thought for, these keywords are found to be logical and related with Unemployment:
+
+-   "Kredi": Maybe people are seeking for more credits when unemployment increases
+-   "İş ilanı": People may be seeking more jobs when unemployment increases.
+-   "İşsizlik": Obviously people will search this term when unemployment increases
+-   "Mülakat": Maybe people are seeking for more interviews because they want to enter new jobs.
+
+It should be noted that maybe the lagged values of these data can be better predictors because, people would search these terms after Unemployment increases. These search terms are results, so the affects of these search terms may be delayed.
+
+Below all of the data is gathered and time series objects are formed. All potential predictor data are plotted and a combination of the potentil predictors are combined. These predictors are also combined within another dataframe.
+
+```{r}
+kredi = fread("/Users/ahmetkarakose/Desktop/kredi.csv")
+names(kredi)[names(kredi) == "kredi: (Türkiye)"] <- "Kredi"
+kredi_ts <- ts(credit_data[,-1], start = time_data, frequency = 12)
+
+is_ilani = fread("/Users/ahmetkarakose/Desktop/is_ilani.csv")
+names(is_ilani)[names(is_ilani) == "iş ilanı: (Türkiye)"] <- "İş ilanı"
+is_ilani_ts <- ts(is_ilani[,-1], start = time_data, frequency = 12)
+
+issizlik = fread("/Users/ahmetkarakose/Desktop/issizlik.csv")
+names(issizlik)[names(issizlik) == "işsizlik: (Türkiye)"] <- "İşsizlik"
+issizlik_ts <- ts(issizlik[,-1], start = time_data, frequency = 12)
+
+mulakat = fread("/Users/ahmetkarakose/Desktop/mulakat.csv")
+names(mulakat)[names(mulakat) == "mülakat: (Türkiye)"] <- "Mülakat"
+mulakat_ts <- ts(interview_data[,-1], start = time_data, frequency = 12)
+
+autoplot(kredi_ts)
+autoplot(is_ilani_ts)
+autoplot(issizlik_ts)
+autoplot(mulakat_ts)
+
+predictors_unemployment <- cbind(kredi[,-1], is_ilani[,-1], issizlik[,-1], mulakat[,-1])
+df_unemployment <- cbind(unemployment_data, predictors)
+```
+
+Below is the correlations between each predictors and the forecast variable. The relations of each of them can be observed below.
+
+```{r}
+require(GGally)
+ggpairs(df[,-1])
+```
+
+Now, it's time to create the model. Firstly the lagged dataframes for all of the selected predictors are created (google trends data). This is to compare the lagged models without the lagged model. Then the piecewise linear trend is formed. In the model seasonal dummy variables are also added. Three possible models are created:
+
+-   fit: Using all the predictors
+-   fit.lag1: Using all the lag-1 predictors
+-   fit.lag2: Using all the lag-2 predictors
+
+The best one will be evaluated based on the lowest AIC value. As it can be seen below, the lowest AIC value is the one with no_lag. We will proceed with this model in the upcoming comparisons.
+
+```{r}
+library(dplyr)
+kredi_lag <- mutate(kredi,
+               kredi_lag1 = lag(kredi$Kredi, 1),  # Lag 1
+               kredi_lag2 = lag(kredi$Kredi, 2),  # Lag 2
+               )
+
+is_ilani_lag <- mutate(is_ilani,
+               is_ilani_lag1 = lag(is_ilani$"İş ilanı", 1),  # Lag 1
+               is_ilani_lag2 = lag(is_ilani$"İş ilanı", 2),  # Lag 2
+               )
+
+issizlik_lag <- mutate(issizlik,
+               issizlik_lag1 = lag(issizlik$"İşsizlik", 1),  # Lag 1
+               issizlik_lag2 = lag(issizlik$"İşsizlik", 2),  # Lag 2
+               )
+
+mulakat_lag <- mutate(mulakat,
+               mulakat_lag1 = lag(mulakat$"Mülakat", 1),  # Lag 1
+               mulakat_lag2 = lag(mulakat$"Mülakat", 2),  # Lag 2
+               )
+
+combined_lag <- cbind(kredi_lag, is_ilani_lag, issizlik_lag, mulakat_lag)
+
+t <- time(unemployment_ts)
+t.break1 <- 2018
+t.break2 <- 2021
+tb1 <- ts(pmax(0, t - t.break1), start = 2014, end = 2024, frequency = 12)
+tb2 <- ts(pmax(0, t- t.break2), start = 2014, end = 2024, frequency = 12)
+
+fit <- tslm(unemployment_ts ~ t + 
+                        tb1 + 
+                        tb2 + 
+                        seasonaldummy(unemployment_ts) + 
+                        kredi_ts + 
+                        is_ilani_ts + 
+                        issizlik_ts + 
+                        mulakat_ts)
+
+fit.lag1 <- tslm(unemployment_ts ~ t + 
+                        tb1 + 
+                        tb2 + 
+                        seasonaldummy(unemployment_ts) + 
+                        kredi_lag1 + 
+                        is_ilani_lag1 + 
+                        issizlik_lag1 + 
+                        mulakat_lag1, data = combined_lag)
+
+fit.lag2 <- tslm(unemployment_ts ~ t + 
+                        tb1 + 
+                        tb2 + 
+                        seasonaldummy(unemployment_ts) + 
+                        kredi_lag2 + 
+                        is_ilani_lag2 + 
+                        issizlik_lag2 + 
+                        mulakat_lag2, data = combined_lag)
+
+no_lag <- CV(fit)
+lag_1 <- CV(fit.lag1)
+lag_2 <- CV(fit.lag2)
+CV_data <- data.frame(rbind(no_lag, lag_1, lag_2))
+CV_data
+```
+
+Now, we will inspect the model further and try to remove the unnecessary predictor. In this case all of the predictors (google trends data) are removed one by one and the models are compared according to AIC values. The lowes AIC value model is: fit.w.o.mulakat. This is the model that doesn't contain the keyword "Mülakat". So our final model is chosen and the residual analysis will be proceeded accordingly.
+
+```{r}
+fit.everything <- tslm(unemployment_ts ~ t + 
+                        tb1 + 
+                        tb2 + 
+                        seasonaldummy(unemployment_ts) + 
+                        kredi_ts + 
+                        is_ilani_ts + 
+                        issizlik_ts + 
+                        mulakat_ts)
+
+fit.w.o.kredi <- tslm(unemployment_ts ~ t + 
+                        tb1 + 
+                        tb2 + 
+                        seasonaldummy(unemployment_ts) + 
+                        is_ilani_ts + 
+                        issizlik_ts + 
+                        mulakat_ts)
+
+fit.w.o.is_ilani <- tslm(unemployment_ts ~ t + 
+                        tb1 + 
+                        tb2 + 
+                        seasonaldummy(unemployment_ts) + 
+                        kredi_ts + 
+                        issizlik_ts + 
+                        mulakat_ts)
+
+fit.w.o.issizlik <- tslm(unemployment_ts ~ t + 
+                        tb1 + 
+                        tb2 + 
+                        seasonaldummy(unemployment_ts) + 
+                        kredi_ts + 
+                        is_ilani_ts + 
+                        mulakat_ts)
+
+fit.w.o.mulakat <- tslm(unemployment_ts ~ t + 
+                        tb1 + 
+                        tb2 + 
+                        seasonaldummy(unemployment_ts) + 
+                        kredi_ts + 
+                        is_ilani_ts + 
+                        issizlik_ts)
+
+all <- CV(fit.everything)
+no_kredi <- CV(fit.w.o.kredi)
+no_is_ilani <- CV(fit.w.o.is_ilani)
+no_issizlik <- CV(fit.w.o.issizlik)
+no_mulakat <- CV(fit.w.o.mulakat)
+CV_data <- data.frame(rbind(all, no_kredi, no_is_ilani, nos_issizlik, no_mulakat))
+CV_data
+```
+
+The model and the data are plotted in order to see visually how they behave.
+
+```{r}
+autoplot(unemployment_ts, series = "Data") + 
+  autolayer(fitted(fit.w.o.mulakat), series = "Model")
+```
+
+From the residual analysis part we can conclude that:
+
+-   The residuals seem to have mean zero and them seem to be normally distributed.
+-   However they show increasing AC especially at lags 12,24 and 36. Therefore we can deduct that there is more information left out especially in seasonality terms.
+
+When considering different predictors we can observe that January, February and March seasonal variables are actually not very intuitive as they have high p-values.
+
+When the Residuals vs. Fitted values graph is observed, it can be seen that
+
+Overall, the model seems to be adequate, however there are parts to improve the model, especially in seasonality terms.
+
+```{r}
+checkresiduals(fit.w.o.mulakat)
+summary(fit.w.o.mulakat)
+
+residual_fitted <- data.frame(cbind(Fitted = fitted(fit.w.o.mulakat), Residuals=residuals(fit.w.o.mulakat)))
+ggplot(residual_fitted, aes(x = Fitted, y = Residuals)) + geom_point() + ggtitle("Residuals vs. Fitted Values")
+```
+
+## House Price Index
+
+In order to get a more real House Price Index, the data is divided to US dollar in order to get the quantities in dollars.
+
+Seasonality can be observed especially at the time between 2014 and 2018.
+
+There is a clear downward trend from 2014 to 2018 and an upward trend from 2022 to 2024.
+
+```{r}
+time_data_house <- c(year(min(house_index_data$Tarih)), month(min(house_index_data$Tarih)))
+
+dollar_datapath = '/Users/ahmetkarakose/Desktop/dolar.xlsx'
+dollar_data = read_excel(dollar_datapath)
+dollar_data <- dollar_data[-(122:133),]
+dollar_data <- dollar_data[,-3]
+dollar_data$"TP DK USD A YTL"  <- as.numeric(dollar_data$"TP DK USD A YTL")
+names(dollar_data)[names(dollar_data) == "TP DK USD A YTL"] <- "Dollar"
+dollar_data$Tarih <- paste(dollar_data$Tarih, "-01", sep = "")
+dollar_data$Tarih <- as.Date(dollar_data$Tarih)
+
+house_index_data[,2] <- house_index_data[,2] / dollar_data[,2]
+
+house_index_ts <- ts(house_index_data$`House Price Index`, start = time_data, frequency = 12)
+
+autoplot(house_index_ts) + ggtitle("House Price Index vs Time") + xlab("Year") + ylab("House Index 2017 = 100")
+```
+
+Let's look at the autocorrelation function of the time series in order to check seasonality. The ACF does not show any clear pattern of seasonality in this case.
+
+```{r}
+Acf(house_index_ts, lag.max = 24)
+```
+
+Now, we want to find predictors from Google Trends that can be somehow related with the House Price Index in Turkey. When keywords for this relation is thought for, these keywords are found to be logical and related with House Price Index:
+
+-   "Satılık daire": Obviously this keyword may be a good predictor for House Price Index
+-   "Faiz": Interest rates may increase credit rates for houses as well. This may have a relation with House Price Index.
+-   "Emlak": Obviously this keyword may be a good predictor for House Price Index
+-   "İpotek"
+
+It should be noted that maybe the lagged values of these data can be better predictors because, people may search these terms after the House Price Index increases. These search terms are results, so the affects of these search terms may be delayed.
+
+Below all of the data is gathered and time series objects are formed. All potential predictor data are plotted and a combination of the potential predictors are combined. These predictors are also combined within another data frame.
+
+```{r}
+satilik_daire = fread("/Users/ahmetkarakose/Desktop/satilik_daire.csv")
+names(satilik_daire)[names(satilik_daire) == "satılık daire: (Türkiye)"] <- "Satılık daire"
+satilik_daire_ts <- ts(satilik_daire[,-1], start = time_data, frequency = 12)
+
+faiz = fread("/Users/ahmetkarakose/Desktop/faiz.csv")
+names(faiz)[names(faiz) == "faiz: (Türkiye)"] <- "Faiz"
+faiz_ts <- ts(faiz[,-1], start = time_data, frequency = 12)
+
+emlak = fread("/Users/ahmetkarakose/Desktop/emlak.csv")
+names(emlak)[names(emlak) == "emlak: (Türkiye)"] <- "Emlak"
+emlak_ts <- ts(emlak[,-1], start = time_data, frequency = 12)
+
+ipotek = fread("/Users/ahmetkarakose/Desktop/ipotek.csv")
+names(ipotek)[names(ipotek) == "ipotek: (Türkiye)"] <- "İpotek"
+ipotek_ts <- ts(ipotek[,-1], start = time_data, frequency = 12)
+
+autoplot(satilik_daire_ts)
+autoplot(faiz_ts)
+autoplot(emlak_ts)
+autoplot(ipotek_ts)
+
+
+predictors_hp_index <- cbind(satilik_daire[,-1], faiz[,-1], emlak[,-1], ipotek[,-1])
+df_hp_index <- cbind(house_index_data, predictors_hp_index)
+```
+
+Below is the correlations between each predictors and the forecast variable. The relations of each of them can be observed below.
+
+```{r}
+require(GGally)
+ggpairs(df_hp_index[,-1])
+```
+
+Now, it's time to create the model. Firstly the lagged data frames for all of the selected predictors are created (Google trends data). This is to compare the lagged models without the lagged model. Then the piece wise linear trend is formed. Three possible models are created:
+
+-   fit: Using all the predictors
+-   fit.lag1: Using all the lag-1 predictors
+-   fit.lag2: Using all the lag-2 predictors
+
+The best one will be evaluated based on the lowest AIC value. As it can be seen below, the lowest AIC value is the one with lag-1. We will proceed with this model in the upcoming comparisons.
+
+```{r}
+
+library(dplyr)
+satilik_daire_lag <- mutate(satilik_daire,
+               satilik_daire_lag1 = lag(satilik_daire$`Satılık daire`, 1),  # Lag 1
+               satilik_daire_lag2 = lag(satilik_daire$`Satılık daire`, 2),  # Lag 2
+               )
+
+faiz_lag <- mutate(faiz,
+               faiz_lag1 = lag(faiz$Faiz, 1),  # Lag 1
+               faiz_lag2 = lag(faiz$Faiz, 2),  # Lag 2
+               )
+
+emlak_lag <- mutate(emlak,
+               emlak_lag1 = lag(emlak$Emlak, 1),  # Lag 1
+               emlak_lag2 = lag(emlak$Emlak, 2),  # Lag 2
+               )
+
+ipotek_lag <- mutate(ipotek,
+               ipotek_lag1 = lag(ipotek$İpotek, 1),  # Lag 1
+               ipotek_lag2 = lag(ipotek$İpotek, 2),  # Lag 2
+               )
+
+combined_lag <- cbind(satilik_daire_lag, faiz_lag, emlak_lag, ipotek_lag)
+
+t <- time(unemployment_ts)
+t.break1 <- 2018
+t.break2 <- 2022
+tb1 <- ts(pmax(0, t - t.break1), start = 2014, end = 2024, frequency = 12)
+tb2 <- ts(pmax(0, t- t.break2), start = 2014, end = 2024, frequency = 12)
+
+fit <- tslm(house_index_ts ~ satilik_daire_ts + 
+                        faiz_ts+ 
+                        emlak_ts +
+                        ipotek_ts + 
+                        t +
+                        tb1 + 
+                        tb2)
+
+fit.lag1 <- tslm(house_index_ts ~ t +
+                        tb1 + 
+                        tb2 + 
+                        satilik_daire_lag1 + 
+                        faiz_lag1 + 
+                        emlak_lag1 +
+                        ipotek_lag1, data = combined_lag)
+
+fit.lag2 <- tslm(house_index_ts ~ t +
+                        tb1 + 
+                        tb2 + 
+                        satilik_daire_lag2 + 
+                        faiz_lag2 + 
+                        emlak_lag2 +
+                        ipotek_lag2, data = combined_lag) 
+
+
+no_lag <- CV(fit)
+lag_1 <- CV(fit.lag1)
+lag_2 <- CV(fit.lag2)
+CV_data <- data.frame(rbind(no_lag, lag_1, lag_2))
+CV_data
+```
+
+Now, we will inspect the model further and try to remove the unnecessary predictor. In this case all of the predictors (Google trends data) are removed one by one and the models are compared according to AIC values. The lowest AIC value model is: fit.w.o.emlak. This is the model that doesn't contain the keyword "Emlak". So our final model is chosen and the residual analysis will be proceeded accordingly.
+
+```{r}
+fit.everything <- tslm(house_index_ts ~ t +
+                        tb1 + 
+                        tb2 + 
+                        satilik_daire_lag1 + 
+                        faiz_lag1 + 
+                        emlak_lag1 +
+                        ipotek_lag1, data = combined_lag)
+
+fit.w.o.satilik_daire <- tslm(house_index_ts ~ t +
+                        tb1 + 
+                        tb2 + 
+                        faiz_lag1 + 
+                        emlak_lag1 +
+                        ipotek_lag1, data = combined_lag)
+
+fit.w.o.faiz <- tslm(house_index_ts ~ t +
+                        tb1 + 
+                        tb2 + 
+                        satilik_daire_lag1 + 
+                        emlak_lag1 +
+                        ipotek_lag1, data = combined_lag)
+
+fit.w.o.emlak <- tslm(house_index_ts ~ t +
+                        tb1 + 
+                        tb2 + 
+                        satilik_daire_lag1 + 
+                        faiz_lag1 + 
+                        ipotek_lag1, data = combined_lag)
+
+fit.w.o.ipotek <- tslm(house_index_ts ~ t +
+                        tb1 + 
+                        tb2 + 
+                        satilik_daire_lag1 + 
+                        faiz_lag1 + 
+                        emlak_lag1, data = combined_lag)
+
+all <- CV(fit.everything)
+no_satilik_daire <- CV(fit.w.o.satilik_daire)
+no_faiz <- CV(fit.w.o.faiz)
+no_emlak <- CV(fit.w.o.emlak)
+no_ipotek <- CV(fit.w.o.ipotek)
+CV_data <- data.frame(rbind(all, no_satilik_daire, no_faiz, no_emlak, no_ipotek))
+CV_data
+```
+The model and the data are plotted in order to see visually how they behave.
+
+```{r}
+autoplot(house_index_ts, series = "Data") + 
+  autolayer(fitted(fit.w.o.emlak), series = "Model")
+```
+From the residual analysis part we can conclude that:
+
+-   The residuals seem to have mean zero and them seem to be normally distributed.
+-   However they show increasing AC especially at lags 1,2,12,18,30. Therefore we can deduct that there is more information left out.
+
+When considering different predictors we can observe that tb1 variable is actually not very intuitive as it has a very high p-value.
+
+When the Residuals vs. Fitted values graph is observed, it can be seen that the residuals are kind of scattered around 
+
+Overall, the model seems to be adequate, however there are parts to improve the model, especially in trend terms.
+
+```{r}
+summary(fit.w.o.emlak)
+checkresiduals(fit.w.o.emlak)
+
+residual_fitted <- data.frame(cbind(Fitted = fitted(fit.w.o.emlak), Residuals=residuals(fit.w.o.emlak)))
+ggplot(residual_fitted, aes(x = Fitted, y = Residuals)) + geom_point() + ggtitle("Residuals vs. Fitted Values")
+```
+## Real Sector Confidence
+
+Lastly, the regression model for the Real Sector Confidence data will be built.
+
+Below is the Real Sector Confidence vs. Time graph. We can make some deductions out of it:
+
+-   There seems to be seasonality especially between 2014-2018.
+-   There seems to be no trend
+-   There is a sharp decrease in 2020 March, most probably due to the corona-virus.
+
+```{r}
+confidence_ts <- ts(confidence$"Real Sector Confidence Index", start = time_data, frequency = 12)
+data.frame(confidence_ts)
+
+autoplot(confidence_ts) + ggtitle("Real Sector Confidence vs Time") + xlab("Year") + ylab("Confidence")
+```
+Let's look at the autocorrelation function of the time series in order to check seasonality. The ACF does not show any clear pattern of seasonality in this case.
+
+```{r}
+ggAcf(confidence_ts, lag.max = 48)
+```
+Now, we want to find predictors from Google Trends that can be somehow related with the Real Sector Confidence in Turkey. When keywords for this relation is thought for, these keywords are found to be logical and related with Real Sector Confidence
+
+-   "Faiz": Increase in interest rates may be a bad sign for confidence
+-   "Ticaret": Increase in trade may mean more confidence
+-   "Uretim": Increase in production may mean more confidence
+-   "İstihdam": Increase in employment may mean more confidence
+
+It should be noted that maybe the lagged values of these data can be better predictors because, people may search these terms after the Real Sector Confidence changes These search terms are results, so the affects of these search terms may be delayed.
+
+Below all of the data is gathered and time series objects are formed. All potential predictor data are plotted and a combination of the potential predictors are combined. These predictors are also combined within another data frame.
+
+Also a time series for corona-start dummy variable is created
+
+```{r}
+ticaret = fread("/Users/ahmetkarakose/Desktop/ticaret.csv")
+names(ticaret)[names(ticaret) == "ticaret: (Türkiye)"] <- "Ticaret"
+ticaret_ts <- ts(ticaret[,-1], start = time_data, frequency = 12)
+
+uretim = fread("/Users/ahmetkarakose/Desktop/uretim.csv")
+names(uretim)[names(uretim) == "üretim: (Türkiye)"] <- "Üretim"
+uretim_ts <- ts(uretim[,-1], start = time_data, frequency = 12)
+
+istihdam = fread("/Users/ahmetkarakose/Desktop/istihdam.csv")
+names(istihdam)[names(istihdam) == "istihdam: (Türkiye)"] <- "İstihdam"
+istihdam_ts <- ts(istihdam[,-1], start = time_data, frequency = 12)
+
+corona_values <- rep(0, 121)
+corona_values[75] <- 1
+corona_ts <- ts(corona_values, start = c(2014, 1), frequency = 12)
+
+autoplot(faiz_ts)
+autoplot(ticaret_ts)
+autoplot(uretim_ts)
+autoplot(istihdam_ts)
+autoplot(corona_ts)
+
+predictors_confidence <- cbind(faiz[,-1], ticaret[,-1], uretim[,-1], istihdam[,-1])
+df_confidence <- cbind(confidence, predictors_confidence)
+
+```
+Below is the correlations between each predictors and the forecast variable. The relations of each of them can be observed below.
+```{r}
+require(GGally)
+ggpairs(df_confidence[,-1])
+```
+
+We were not able to decide whether seasnality and trend were necessary. Apparently the adjusted R^2 value tells us to add seasnoality and trend as predictors
+```{r}
+fit <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        corona_ts + 
+                        t + 
+                        season)
+
+fit.season <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        corona_ts + 
+                        season)
+
+fit.trend <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        corona_ts + 
+                        t)
+fit.none <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        corona_ts)
+
+no_season_no_trend <- CV(fit.trend)
+season_no_trend <- CV(fit.season)
+trend_no_season <- CV(fit.trend)
+all <- CV(fit)
+CV_data <- data.frame(rbind(no_season_no_trend, season_no_trend, trend_no_season, all))
+CV_data
+```
+Nowi the lagged data frames for all of the selected predictors are created (Google trends data). This is to compare the lagged models without the lagged model. Then the piece wise linear trend is formed. Three possible models are created:
+
+-   fit: Using all the predictors
+-   fit.lag1: Using all the lag-1 predictors
+-   fit.lag2: Using all the lag-2 predictors
+
+The best one will be evaluated based on the lowest AIC value. As it can be seen below, the lowest AIC value is the one with no lag. We will proceed with this model in the upcoming comparisons.
+```{r}
+library(dplyr)
+
+faiz_lag <- mutate(faiz,
+               faiz_lag1 = lag(faiz$Faiz, 1),  # Lag 1
+               faiz_lag2 = lag(faiz$Faiz, 2),  # Lag 2
+               )
+
+ticaret_lag <- mutate(ticaret,
+               ticaret_lag1 = lag(ticaret$Ticaret, 1),  # Lag 1
+               ticaret_lag2 = lag(ticaret$Ticaret, 2),  # Lag 2
+               )
+
+uretim_lag <- mutate(uretim,
+               uretim_lag1 = lag(uretim$Üretim, 1),  # Lag 1
+               uretim_lag2 = lag(uretim$Üretim, 2),  # Lag 2
+               )
+
+istihdam_lag <- mutate(istihdam,
+               istihdam_lag1 = lag(istihdam$İstihdam, 1),  # Lag 1
+               istihdam_lag2 = lag(istihdam$İstihdam, 2),  # Lag 2
+               )
+
+combined_lag <- cbind(faiz_lag, ticaret_lag, uretim_lag, istihdam_lag)
+
+fit <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        corona_ts + 
+                        t + 
+                        season)
+
+fit.lag1 <- tslm(confidence_ts ~ t + 
+                        season + 
+                        faiz_lag1 + 
+                        ticaret_lag1 + 
+                        uretim_lag1 + 
+                        istihdam_lag1, data = combined_lag)
+
+fit.lag2 <- tslm(confidence_ts ~ t + 
+                        season + 
+                        faiz_lag2 + 
+                        ticaret_lag2 + 
+                        uretim_lag2 + 
+                        istihdam_lag2, data = combined_lag)
+
+no_lag <- CV(fit)
+lag_1 <- CV(fit.lag1)
+lag_2 <- CV(fit.lag2)
+CV_data <- data.frame(rbind(no_lag, lag_1, lag_2))
+CV_data
+```
+Now, we will inspect the model further and try to remove the unnecessary predictor. In this case all of the predictors (Google trends data) are removed one by one and the models are compared according to AIC and adj. R^2 values. The best models are fit.everything and fit.w.o.corona respectively for adj. R^2 value and AIC value. We will proceed with fit.everything
+```{r}
+fit.everything <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        corona_ts + 
+                        t + 
+                        season)
+
+fit.w.o.faiz <- tslm(confidence_ts ~ ticaret_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        corona_ts + 
+                        t + 
+                        season)
+
+fit.w.o.ticaret <- tslm(confidence_ts ~ faiz_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        corona_ts + 
+                        t + 
+                        season)
+
+fit.w.o.uretim <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        istihdam_ts + 
+                        corona_ts + 
+                        t + 
+                        season)
+
+fit.w.o.istihdam <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        uretim_ts + 
+                        corona_ts + 
+                        t + 
+                        season)
+
+fit.w.o.corona <- tslm(confidence_ts ~ faiz_ts + 
+                        ticaret_ts + 
+                        uretim_ts + 
+                        istihdam_ts + 
+                        t + 
+                        season)
+
+all <- CV(fit.everything)
+no_faiz <- CV(fit.w.o.faiz)
+no_ticaret <- CV(fit.w.o.ticaret)
+no_uretim <- CV(fit.w.o.uretim)
+no_istihdam <- CV(fit.w.o.istihdam)
+no_corona <- CV(fit.w.o.corona)
+CV_data <- data.frame(rbind(all, no_faiz, no_ticaret, no_uretim, no_istihdam, no_corona))
+CV_data
+```
+The model and the data are plotted in order to see visually how they behave.
+
+```{r}
+autoplot(confidence_ts, series = "Data") + 
+  autolayer(fitted(fit.everything), series = "Model")
+```
+From the residual analysis part we can conclude that:
+
+-   The residuals seem to have mean zero and them seem to be normally distributed.
+-   However the data show very high autocorrelation between residuals.
+
+When considering different predictors we can observe that most of the seasonality values are not that informative (We were not sure whether to add to the model)
+
+When the Residuals vs. Fitted values graph is observed, it can be seen that the residuals are kind of scattered around 
+
+Overall, the model seems to deosn't seem adequate as there is really high AC between residuals and the adjusted R^2 value is pretty small.
+
+```{r}
+summary(fit.everything)
+checkresiduals(fit.everything)
+
+residual_fitted <- data.frame(cbind(Fitted = fitted(fit.everything), Residuals=residuals(fit.everything)))
+ggplot(residual_fitted, aes(x = Fitted, y = Residuals)) + geom_point() + ggtitle("Residuals vs. Fitted Values")
+```
+## Conclusion
+
+Overall, we have built three regression models in three different time series. Even though some of the models were better than the other models there was one common problem: autocorrelation between residuals. In all of the models the ACF graph was not as desired and this remarked further investigation on the model.
+
+However other than this, this assignment tought how to build models, select predictors, compare models and do residual analysis for different time series and was benefitary.
+
+## Appendices
+
+ChatGPT:
+
+- Help from LLM in order to create dataframes add and subtract columns and rows and also for creating lagged data.
