@@ -6,7 +6,8 @@ Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://j
 
 ### HW1
 
-https://github.com/BU-IE-360/spring24-akarakose/blob/main/IE360_HW1_AK.Rmd
+RMD file: https://github.com/BU-IE-360/spring24-akarakose/blob/main/IE360_HW1_AK.Rmd
+HTML file: https://github.com/BU-IE-360/spring24-akarakose/blob/main/IE360_HW1_AK.html
 
 ### Markdown
 
