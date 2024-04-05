@@ -4,6 +4,10 @@ You can use the editor on GitHub to maintain and preview the content for your we
 
 Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
 
+### HW1
+
+https://github.com/BU-IE-360/spring24-akarakose/blob/main/IE360_HW1_AK.Rmd
+
 ### Markdown
 
 Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
