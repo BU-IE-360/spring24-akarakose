@@ -1,37 +1,17 @@
-## Welcome to GitHub Pages
+## IE360
 
-You can use the editor on GitHub to maintain and preview the content for your website in Markdown files.
+Below, you can find my work related to statistical forecasting and time series course.
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
 
 ### HW1
 
 RMD file: https://github.com/BU-IE-360/spring24-akarakose/blob/main/IE360_HW1_AK.Rmd
 HTML file: https://github.com/BU-IE-360/spring24-akarakose/blob/main/IE360_HW1_AK.html
 
-### Markdown
+### Project
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+Project folder: https://github.com/BU-IE-360/spring24-akarakose/tree/main/Project
 
-```markdown
-Syntax highlighted code block
-
-# Header 1
-## Header 2
-### Header 3
-
-- Bulleted
-- List
-
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
-```
-
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
 
 ### Jekyll Themes
 
